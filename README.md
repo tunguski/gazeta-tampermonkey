@@ -39,6 +39,21 @@ obrazów, ramek, reklam i całego JavaScriptu strony.
 > zapisać. W konsoli (F12) skrypt wypisuje swoją wersję i wykryty tryb
 > (`artykuł` / `lista`), co ułatwia diagnozę.
 
+## Rozwój / formatowanie
+
+Kod trzymany jest w limicie **80 znaków na linię**. Do formatowania służy
+[Prettier](https://prettier.io/) (konfiguracja w `.prettierrc.json`):
+
+```bash
+npm install        # jednorazowo
+npm run format        # sformatuj gazeta-reader.user.js
+npm run format:check  # sprawdź bez zmian (np. w CI)
+```
+
+> Prettier nie zawija komentarzy ani długich literałów — te zawijane są ręcznie.
+> Wyjątek: nagłówek `@description` musi pozostać w jednej linii (wymóg
+> Tampermonkey).
+
 ## Obsługiwane domeny
 
 Oprócz `*.gazeta.pl` skrypt działa też na powiązanych serwisach grupy:
