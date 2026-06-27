@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gazeta.pl — czysta lista artykułów
 // @namespace    https://github.com/tunguski/gazeta-tampermonkey
-// @version      1.5.0
+// @version      1.5.1
 // @description  Wyłącza JavaScript oryginalnej strony gazeta.pl (CSP), usuwa obrazy, ramki i reklamy. Na stronach z listą pokazuje prostą listę artykułów; na stronie artykułu pokazuje samą treść w minimalistycznym stylu.
 // @author       tunguski
 // @match        *://*.gazeta.pl/*
@@ -24,7 +24,6 @@
 // @connect      czterykaty.pl
 // @connect      haps.pl
 // @connect      edziecko.pl
-// @connect      wyborcza.pl
 // @connect      tokfm.pl
 // @noframes
 // ==/UserScript==
@@ -77,7 +76,7 @@
     console.error('[gazeta-reader] CSP error:', e);
   }
   console.info(
-    '[gazeta-reader] v1.5.0 aktywny — tryb:',
+    '[gazeta-reader] v1.5.1 aktywny — tryb:',
     /,\d+,\d{4,},[^/]*\.html(\?|#|$)/i.test(location.pathname) &&
       !/\/0,0?\.html/.test(location.pathname)
       ? 'artykuł'
@@ -156,7 +155,6 @@
     weekend: 'Weekend',
     kobieta: 'Kobieta',
     avanti24: 'Moda (Avanti)',
-    wyborcza: 'Wyborcza',
     wysokieobcasy: 'Wysokie Obcasy',
     moto: 'Moto',
     czterykaty: 'Cztery Kąty',
@@ -189,11 +187,13 @@
   };
 
   // Całe sekcje (po pierwszym członie hosta) do pominięcia.
-  // Avanti = w większości reklamy; Horoskopy i Wysokie Obcasy — na życzenie.
+  // Avanti = w większości reklamy; Wyborcza = płatna; Horoskopy i Wysokie
+  // Obcasy — na życzenie.
   const BLOCKED_SECTION_KEYS = new Set([
     'avanti24',
     'horoskopy',
     'wysokieobcasy',
+    'wyborcza',
   ]);
 
   // Etykiety linków do pominięcia:

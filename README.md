@@ -27,7 +27,8 @@ obrazów, ramek, reklam i całego JavaScriptu strony.
 
 ## Filtry
 
-- Pomija całe sekcje: **Avanti**, **Horoskopy**, **Wysokie Obcasy**.
+- Pomija całe sekcje: **Avanti**, **Wyborcza** (płatna), **Horoskopy**,
+  **Wysokie Obcasy**.
 - Pomija linki oznaczone **SUBSKRYPCJA** (treść płatna) oraz
   **MATERIAŁ PROMOCYJNY** (reklama).
 - Odrzuca linki do hostów reklamowych/trackerów (DoubleClick, Taboola,
