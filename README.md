@@ -13,15 +13,17 @@ obrazów, ramek, reklam i całego JavaScriptu strony.
   dotyczy.
 - **Usuwa media i reklamy** — fizycznie kasuje `img`, `picture`, `iframe`,
   `video`, `svg`, `canvas` itd.
-- **Listy / fronty sekcji** → prosta lista artykułów pogrupowana w sekcje
-  (Wiadomości, Sport, Biznes…), posortowana wg liczby artykułów. Nagłówek
-  sekcji można kliknąć, aby ją zwinąć/rozwinąć (▾ / ▸).
+- **Listy / fronty sekcji** → prosta lista artykułów pogrupowana w sekcje.
+  Kolejność jest stała: **Wiadomości, Biznes, Sport, Moto, Kultura**, a dalej
+  pozostałe sekcje wg liczby artykułów. Domyślnie rozwinięta jest tylko
+  **Wiadomości** — każdy nagłówek można kliknąć, aby zwinąć/rozwinąć (▾ / ▸).
 - **Strona artykułu** → sama treść (tytuł, lead, akapity, śródtytuły) w
   minimalistycznym stylu, bez listy artykułów powiązanych.
-- **Ciepłe („nocne") tło** — przycisk 🌙 w prawym górnym rogu przełącza między
-  jasną a ciepłą/sepiową paletą (mniej niebieskiego światła, łagodniejszą dla
-  oczu — na wzór *Night light* w Windows). Wybór jest zapamiętywany w
-  przeglądarce (`GM_setValue`) i wspólny dla wszystkich serwisów grupy.
+- **Ciepłe („nocne") tło** — przycisk 🌙 w prawym górnym rogu treści przełącza
+  między jasną a ciepłą/sepiową paletą (mniej niebieskiego światła,
+  łagodniejszą dla oczu — na wzór *Night light* w Windows). Wybór jest
+  zapamiętywany w przeglądarce (`GM_setValue`) i wspólny dla wszystkich
+  serwisów grupy.
 
 ## Filtry
 
@@ -30,6 +32,11 @@ obrazów, ramek, reklam i całego JavaScriptu strony.
   **MATERIAŁ PROMOCYJNY** (reklama).
 - Odrzuca linki do hostów reklamowych/trackerów (DoubleClick, Taboola,
   Outbrain itp.).
+- W treści artykułu usuwa wstawki, które nie są właściwym tekstem:
+  - zachęty/linki do social mediów (np. „Dołącz do … na Facebooku!",
+    Instagram, X/Twitter, TikTok, YouTube),
+  - cross-promo **„Zobacz:"** / **„Sprawdź:"** linkujące inny artykuł,
+  - bloki **„To także może cię zainteresować:"** (lista powiązanych).
 
 ## Instalacja
 

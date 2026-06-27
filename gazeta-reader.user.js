@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gazeta.pl — czysta lista artykułów
 // @namespace    https://github.com/tunguski/gazeta-tampermonkey
-// @version      1.2.0
+// @version      1.4.0
 // @description  Wyłącza JavaScript oryginalnej strony gazeta.pl (CSP), usuwa obrazy, ramki i reklamy. Na stronach z listą pokazuje prostą listę artykułów; na stronie artykułu pokazuje samą treść w minimalistycznym stylu.
 // @author       tunguski
 // @match        *://*.gazeta.pl/*
@@ -67,7 +67,7 @@
     console.error('[gazeta-reader] CSP error:', e);
   }
   console.info(
-    '[gazeta-reader] v1.2.0 aktywny — tryb:',
+    '[gazeta-reader] v1.4.0 aktywny — tryb:',
     /,\d+,\d{4,},[^/]*\.html(\?|#|$)/i.test(location.pathname) &&
       !/\/0,0?\.html/.test(location.pathname)
       ? 'artykuł'
@@ -199,9 +199,11 @@
   const seen = new Set();
   const bySection = new Map();
   let totalCount = 0;
-  // sekcje zwinięte przez użytkownika (po nazwie) — trzymane poza DOM-em,
-  // żeby przetrwały ponowne rendery (timery, przełączenie motywu)
+  // sekcje zwinięte (po nazwie) — trzymane poza DOM-em, żeby przetrwały
+  // ponowne rendery (timery, przełączenie motywu)
   const collapsed = new Set();
+  // sekcje, którym nadaliśmy już domyślny stan zwinięcia (raz na sekcję)
+  const collapseInit = new Set();
 
   const collectArticles = () => {
     let added = 0;
@@ -343,13 +345,14 @@
     subtitle:
       'font-size:20px;line-height:1.3;margin:26px 0 10px;' +
       `color:${p.title};`,
-    // przełącznik motywu (prawy górny róg) — sama ikona
+    // pasek przełącznika motywu — w treści, wyrównany do prawej
+    toggleBar: 'text-align:right;margin:0 0 4px;',
+    // przełącznik motywu — sama ikona, w normalnym przepływie strony
     toggle:
-      'position:fixed;top:12px;right:12px;z-index:2147483647;' +
-      'width:36px;height:36px;padding:0;font-size:18px;line-height:1;' +
-      'display:flex;align-items:center;justify-content:center;' +
-      `cursor:pointer;color:${p.text};background:${p.btnBg};` +
-      `border:1px solid ${p.rule};border-radius:50%;` +
+      'position:relative;width:36px;height:36px;padding:0;font-size:18px;' +
+      'line-height:1;display:inline-flex;align-items:center;' +
+      `justify-content:center;cursor:pointer;color:${p.text};` +
+      `background:${p.btnBg};border:1px solid ${p.rule};border-radius:50%;` +
       'box-shadow:0 1px 3px rgba(0,0,0,.18);',
   });
 
@@ -359,6 +362,21 @@
   // Przebudowa: usuń media + całą treść, narysuj listę wprost w <body>
   // ---------------------------------------------------------------------------
   const ROOT_ID = 'gz-root';
+
+  // Kolejność sekcji: najpierw te „główne" (w tej kolejności), potem reszta
+  // wg liczby artykułów. Domyślnie rozwinięta tylko „Wiadomości".
+  const SECTION_ORDER = [
+    'Wiadomości',
+    'Biznes (Next)',
+    'Sport',
+    'Moto',
+    'Kultura',
+  ];
+  const DEFAULT_OPEN_SECTION = 'Wiadomości';
+  const sectionRank = (name) => {
+    const i = SECTION_ORDER.indexOf(name);
+    return i === -1 ? SECTION_ORDER.length : i;
+  };
 
   const buildRoot = () => {
     const root = el('div', { id: ROOT_ID, style: S.root });
@@ -374,7 +392,12 @@
 
     const sections = Array.from(bySection.entries())
       .filter(([, items]) => items.length)
-      .sort((a, b) => b[1].length - a[1].length);
+      .sort((a, b) => {
+        const ra = sectionRank(a[0]);
+        const rb = sectionRank(b[0]);
+        if (ra !== rb) return ra - rb;
+        return b[1].length - a[1].length;
+      });
 
     sub.textContent = totalCount
       ? `Znaleziono ${totalCount} artykułów w ${sections.length} sekcjach. ` +
@@ -382,6 +405,12 @@
       : 'Nie znaleziono artykułów na tej stronie.';
 
     for (const [name, items] of sections) {
+      // przy pierwszym pokazaniu sekcji: zwiń wszystko poza „Wiadomości"
+      if (!collapseInit.has(name)) {
+        collapseInit.add(name);
+        if (name !== DEFAULT_OPEN_SECTION) collapsed.add(name);
+      }
+
       const sec = el('section', { style: S.section });
 
       const isCollapsed = collapsed.has(name);
@@ -456,6 +485,52 @@
     document.querySelector('#article_wrapper') ||
     document.body;
 
+  // Wstawki do usunięcia z treści artykułu:
+  //   - linki/CTA do serwisów społecznościowych
+  //     (np. „Dołącz do … na Facebooku!"),
+  //   - cross-promo „Zobacz:" / „Sprawdź:" linkujące inny artykuł,
+  //   - bloki „To także może cię zainteresować:" (lista powiązanych).
+  const SOCIAL_HOST_RE = new RegExp(
+    [
+      'facebook\\.com',
+      'fb\\.(?:com|me)',
+      'instagram\\.com',
+      '(?:twitter|x)\\.com',
+      'tiktok\\.com',
+      'youtube\\.com',
+      'youtu\\.be',
+      'threads\\.net',
+      'snapchat\\.com',
+      'linkedin\\.com',
+      't\\.me',
+    ].join('|'),
+    'i',
+  );
+  // bez \b wokół słów: polskie litery (ź, ł…) nie tworzą granicy \w,
+  // a odmiany („Instagramie", „Facebooku") i tak mają trafiać
+  const SOCIAL_CTA_RE = new RegExp(
+    '(?:dołącz|polub|obserwuj|śledź|znajdziesz nas|jesteśmy)' +
+      '[^.]{0,60}' +
+      '(?:facebook|instagram|twitter|tiktok|youtube|threads|snapchat)',
+    'i',
+  );
+  // lookahead zamiast \b: chroni przed „Zobaczyłem to:", działa po „sprawdź"
+  const CROSSLINK_RE = /^\s*(?:zobacz|sprawdź)(?![a-ząćęłńóśźż])[^:]{0,24}:/i;
+  // „(To także) może cię zainteresować/zainteresuje" — nagłówek powiązanych
+  const RELATED_RE = /może ci[eę].{0,16}zaintereso/i;
+
+  const isJunkBlock = (node, t) => {
+    const links = node.querySelectorAll ? node.querySelectorAll('a[href]') : [];
+    for (const a of links) {
+      if (SOCIAL_HOST_RE.test(a.getAttribute('href') || '')) return true;
+    }
+    if (SOCIAL_CTA_RE.test(t)) return true;
+    if (RELATED_RE.test(t)) return true;
+    // „Zobacz:" / „Sprawdź:" liczą się jako śmieć tylko gdy faktycznie linkują
+    if (links.length && CROSSLINK_RE.test(t)) return true;
+    return false;
+  };
+
   // Wyciągamy treść artykułu do modelu RAZ (źródło znika po czyszczeniu),
   // a render z modelu można powtarzać — np. przy przełączaniu motywu.
   const extractArticle = () => {
@@ -493,6 +568,7 @@
       if (n.closest(JUNK_ANCESTOR)) continue;
       const t = norm(n.textContent);
       if (!t || /^reklama$/i.test(t)) continue;
+      if (isJunkBlock(n, t)) continue;
       const head = /^h[2-4]$/i.test(n.tagName);
       // w trybie zapasowym odrzucamy krótkie „śmieci" (menu, podpisy itp.)
       if (!usingSpecific && !head && t.length < 25) continue;
@@ -546,23 +622,22 @@
 
   const TOGGLE_ID = 'gz-theme-toggle';
 
-  // Przełącznik motywu w prawym górnym rogu (odtwarzany przy każdym renderze).
-  const mountToggle = () => {
-    const old = document.getElementById(TOGGLE_ID);
-    if (old) old.remove();
+  // Przycisk przełącznika motywu (tworzony od nowa przy każdym renderze).
+  const makeToggle = () => {
     const warm = theme === 'warm';
+    const label = warm
+      ? 'Przełącz na jasne tło'
+      : 'Przełącz na ciepłe (nocne) tło';
     const btn = el('button', {
       id: TOGGLE_ID,
       type: 'button',
       style: S.toggle,
-      title: warm ? 'Przełącz na jasne tło' : 'Przełącz na ciepłe (nocne) tło',
-      'aria-label': warm
-        ? 'Przełącz na jasne tło'
-        : 'Przełącz na ciepłe (nocne) tło',
+      title: label,
+      'aria-label': label,
       text: warm ? '☀️' : '🌙',
     });
     btn.addEventListener('click', toggleTheme);
-    document.body.append(btn);
+    return btn;
   };
 
   // Narysuj bieżący widok wg aktywnego motywu (z modelu lub zebranych linków).
@@ -571,12 +646,13 @@
     const articleMode = isArticlePage();
     const root =
       articleMode && articleModel ? renderArticle(articleModel) : buildRoot();
+    // przełącznik w treści (przewija się ze stroną), wyrównany do prawej
+    root.prepend(el('div', { style: S.toggleBar }, makeToggle()));
     document.body.replaceChildren(root);
     document.body.setAttribute('style', S.body);
     document.body.className = '';
     document.documentElement.style.background = PALETTES[theme].bg;
     if (!articleMode) document.title = 'Gazeta.pl — lista artykułów';
-    mountToggle();
   };
 
   function toggleTheme() {
