@@ -14,9 +14,14 @@ obrazów, ramek, reklam i całego JavaScriptu strony.
 - **Usuwa media i reklamy** — fizycznie kasuje `img`, `picture`, `iframe`,
   `video`, `svg`, `canvas` itd.
 - **Listy / fronty sekcji** → prosta lista artykułów pogrupowana w sekcje
-  (Wiadomości, Sport, Biznes…), posortowana wg liczby artykułów.
+  (Wiadomości, Sport, Biznes…), posortowana wg liczby artykułów. Nagłówek
+  sekcji można kliknąć, aby ją zwinąć/rozwinąć (▾ / ▸).
 - **Strona artykułu** → sama treść (tytuł, lead, akapity, śródtytuły) w
   minimalistycznym stylu, bez listy artykułów powiązanych.
+- **Ciepłe („nocne") tło** — przycisk 🌙 w prawym górnym rogu przełącza między
+  jasną a ciepłą/sepiową paletą (mniej niebieskiego światła, łagodniejszą dla
+  oczu — na wzór *Night light* w Windows). Wybór jest zapamiętywany w
+  przeglądarce (`GM_setValue`) i wspólny dla wszystkich serwisów grupy.
 
 ## Filtry
 

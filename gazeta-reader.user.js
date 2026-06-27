@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gazeta.pl — czysta lista artykułów
 // @namespace    https://github.com/tunguski/gazeta-tampermonkey
-// @version      1.0.0
+// @version      1.2.0
 // @description  Wyłącza JavaScript oryginalnej strony gazeta.pl (CSP), usuwa obrazy, ramki i reklamy. Na stronach z listą pokazuje prostą listę artykułów; na stronie artykułu pokazuje samą treść w minimalistycznym stylu.
 // @author       tunguski
 // @match        *://*.gazeta.pl/*
@@ -14,6 +14,8 @@
 // @match        *://www.edziecko.pl/*
 // @run-at       document-start
 // @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @noframes
 // ==/UserScript==
 
@@ -65,7 +67,7 @@
     console.error('[gazeta-reader] CSP error:', e);
   }
   console.info(
-    '[gazeta-reader] v1.0.0 aktywny — tryb:',
+    '[gazeta-reader] v1.2.0 aktywny — tryb:',
     /,\d+,\d{4,},[^/]*\.html(\?|#|$)/i.test(location.pathname) &&
       !/\/0,0?\.html/.test(location.pathname)
       ? 'artykuł'
@@ -197,6 +199,9 @@
   const seen = new Set();
   const bySection = new Map();
   let totalCount = 0;
+  // sekcje zwinięte przez użytkownika (po nazwie) — trzymane poza DOM-em,
+  // żeby przetrwały ponowne rendery (timery, przełączenie motywu)
+  const collapsed = new Set();
 
   const collectArticles = () => {
     let added = 0;
@@ -243,37 +248,112 @@
   };
 
   // ---------------------------------------------------------------------------
+  // Motyw kolorów + zapamiętany wybór (ciepłe „nocne" tło)
+  // ---------------------------------------------------------------------------
+  // Dwie palety: jasna (domyślna) i ciepła/sepiowa — mniej niebieskiego
+  // światła, łagodniejsza dla oczu (na wzór Night light w Windows).
+  const PALETTES = {
+    light: {
+      bg: '#fafafa',
+      text: '#1a1a1a',
+      title: '#111',
+      secTitle: '#222',
+      accent: '#c00',
+      link: '#14396b',
+      sub: '#666',
+      meta: '#888',
+      count: '#999',
+      rule: '#ddd',
+      itemRule: '#eee',
+      btnBg: '#fff',
+    },
+    warm: {
+      bg: '#f4ecd8',
+      text: '#2b2618',
+      title: '#241d10',
+      secTitle: '#2a2417',
+      accent: '#a33',
+      link: '#8a4b1f',
+      sub: '#7a6f57',
+      meta: '#8a7e63',
+      count: '#a89c80',
+      rule: '#ddcca8',
+      itemRule: '#e7dcc2',
+      btnBg: '#ece0c4',
+    },
+  };
+
+  // GM_*Value trzyma ustawienie wspólnie dla WSZYSTKICH serwisów grupy
+  // (gazeta.pl, sport.pl, ...), inaczej niż per-domenowy localStorage.
+  const THEME_KEY = 'gz-theme';
+  const loadTheme = () => {
+    try {
+      return GM_getValue(THEME_KEY) === 'warm' ? 'warm' : 'light';
+    } catch {
+      return 'light';
+    }
+  };
+  const saveTheme = (t) => {
+    try {
+      GM_setValue(THEME_KEY, t);
+    } catch (e) {
+      console.error('[gazeta-reader] zapis motywu:', e);
+    }
+  };
+
+  let theme = loadTheme();
+
+  // ---------------------------------------------------------------------------
   // Style inline (nie zależymy od arkuszy strony)
   // ---------------------------------------------------------------------------
-  const S = {
-    body: 'margin:0;padding:0;background:#fafafa;',
+  const makeStyles = (p) => ({
+    body: `margin:0;padding:0;background:${p.bg};`,
     root:
       'max-width:760px;margin:0 auto;padding:24px 16px 64px;' +
       'font-family:-apple-system,system-ui,"Segoe UI",Roboto,Arial,' +
-      'sans-serif;color:#1a1a1a;line-height:1.5;',
-    h1: 'font-size:24px;margin:0 0 4px;color:#c00;',
-    head: 'border-bottom:2px solid #c00;padding-bottom:12px;margin-bottom:8px;',
-    sub: 'margin:0;font-size:13px;color:#666;',
+      `sans-serif;color:${p.text};line-height:1.5;`,
+    h1: `font-size:24px;margin:0 0 4px;color:${p.accent};`,
+    head:
+      `border-bottom:2px solid ${p.accent};padding-bottom:12px;` +
+      'margin-bottom:8px;',
+    sub: `margin:0;font-size:13px;color:${p.sub};`,
     section: 'margin-top:28px;',
     secTitle:
       'font-size:18px;margin:0 0 8px;padding-bottom:4px;' +
-      'border-bottom:1px solid #ddd;color:#222;',
-    count: 'font-weight:normal;color:#999;font-size:14px;',
+      'cursor:pointer;user-select:none;' +
+      `border-bottom:1px solid ${p.rule};color:${p.secTitle};`,
+    caret:
+      'display:inline-block;width:0.9em;margin-right:4px;' +
+      `font-size:0.8em;color:${p.count};`,
+    count: `font-weight:normal;color:${p.count};font-size:14px;`,
     list: 'list-style:none;margin:0;padding:0;',
-    item: 'padding:6px 0;border-bottom:1px solid #eee;',
-    link: 'color:#14396b;text-decoration:none;font-size:16px;display:block;',
+    item: `padding:6px 0;border-bottom:1px solid ${p.itemRule};`,
+    link: `color:${p.link};text-decoration:none;font-size:16px;display:block;`,
     // strona artykułu
     back:
-      'display:inline-block;margin:0 0 16px;font-size:13px;color:#c00;' +
+      `display:inline-block;margin:0 0 16px;font-size:13px;color:${p.accent};` +
       'text-decoration:none;',
-    artTitle: 'font-size:28px;line-height:1.25;margin:0 0 10px;color:#111;',
-    meta: 'margin:0 0 20px;font-size:13px;color:#888;',
+    artTitle:
+      'font-size:28px;line-height:1.25;margin:0 0 10px;' + `color:${p.title};`,
+    meta: `margin:0 0 20px;font-size:13px;color:${p.meta};`,
     lead:
       'font-size:18px;font-weight:600;line-height:1.5;margin:0 0 20px;' +
-      'color:#111;',
-    para: 'margin:0 0 16px;font-size:17px;line-height:1.65;color:#1a1a1a;',
-    subtitle: 'font-size:20px;line-height:1.3;margin:26px 0 10px;color:#111;',
-  };
+      `color:${p.title};`,
+    para: `margin:0 0 16px;font-size:17px;line-height:1.65;color:${p.text};`,
+    subtitle:
+      'font-size:20px;line-height:1.3;margin:26px 0 10px;' +
+      `color:${p.title};`,
+    // przełącznik motywu (prawy górny róg) — sama ikona
+    toggle:
+      'position:fixed;top:12px;right:12px;z-index:2147483647;' +
+      'width:36px;height:36px;padding:0;font-size:18px;line-height:1;' +
+      'display:flex;align-items:center;justify-content:center;' +
+      `cursor:pointer;color:${p.text};background:${p.btnBg};` +
+      `border:1px solid ${p.rule};border-radius:50%;` +
+      'box-shadow:0 1px 3px rgba(0,0,0,.18);',
+  });
+
+  let S = makeStyles(PALETTES[theme]);
 
   // ---------------------------------------------------------------------------
   // Przebudowa: usuń media + całą treść, narysuj listę wprost w <body>
@@ -303,15 +383,16 @@
 
     for (const [name, items] of sections) {
       const sec = el('section', { style: S.section });
-      sec.append(
-        el(
-          'h2',
-          { style: S.secTitle },
-          name,
-          el('span', { style: S.count, text: ` (${items.length})` }),
-        ),
-      );
-      const list = el('ul', { style: S.list });
+
+      const isCollapsed = collapsed.has(name);
+      const caret = el('span', {
+        style: S.caret,
+        text: isCollapsed ? '▸' : '▾',
+      });
+
+      const list = el('ul', {
+        style: S.list + (isCollapsed ? 'display:none;' : ''),
+      });
       for (const it of items) {
         list.append(
           el(
@@ -321,7 +402,23 @@
           ),
         );
       }
-      sec.append(list);
+
+      const head = el(
+        'h2',
+        { style: S.secTitle, title: 'Kliknij, aby zwinąć/rozwinąć sekcję' },
+        caret,
+        name,
+        el('span', { style: S.count, text: ` (${items.length})` }),
+      );
+      head.addEventListener('click', () => {
+        const hide = !collapsed.has(name);
+        if (hide) collapsed.add(name);
+        else collapsed.delete(name);
+        list.style.display = hide ? 'none' : '';
+        caret.textContent = hide ? '▸' : '▾';
+      });
+
+      sec.append(head, list);
       root.append(sec);
     }
     return root;
@@ -359,28 +456,13 @@
     document.querySelector('#article_wrapper') ||
     document.body;
 
-  const buildArticle = () => {
-    const root = el('div', { id: ROOT_ID, style: S.root });
-
-    root.append(
-      el('a', {
-        style: S.back,
-        href: 'https://www.gazeta.pl/0,0.html',
-        text: '‹ Gazeta.pl — lista artykułów',
-      }),
-    );
-
+  // Wyciągamy treść artykułu do modelu RAZ (źródło znika po czyszczeniu),
+  // a render z modelu można powtarzać — np. przy przełączaniu motywu.
+  const extractArticle = () => {
     const titleEl =
       document.querySelector('#article_title') || document.querySelector('h1');
-    root.append(
-      el('h1', {
-        style: S.artTitle,
-        text:
-          norm(titleEl && titleEl.textContent) ||
-          norm(document.title) ||
-          'Artykuł',
-      }),
-    );
+    const title =
+      norm(titleEl && titleEl.textContent) || norm(document.title) || 'Artykuł';
 
     const authorEl = document.querySelector('.article_author');
     const dateEl = document.querySelector('.article_date');
@@ -390,12 +472,10 @@
     ]
       .filter(Boolean)
       .join(' • ');
-    if (meta) root.append(el('p', { style: S.meta, text: meta }));
 
-    const leadText = norm(
+    const lead = norm(
       (document.querySelector('#gazeta_article_lead') || {}).textContent,
     );
-    if (leadText) root.append(el('p', { style: S.lead, text: leadText }));
 
     const body = pickBody();
     // 1) preferowane: dokładny tekst artykułu gazeta.pl
@@ -408,24 +488,44 @@
       ? specific
       : body.querySelectorAll('p, h2, h3, h4, blockquote, li');
 
-    let count = 0;
+    const blocks = [];
     for (const n of nodes) {
       if (n.closest(JUNK_ANCESTOR)) continue;
       const t = norm(n.textContent);
       if (!t || /^reklama$/i.test(t)) continue;
-      const isHead = /^h[2-4]$/i.test(n.tagName);
+      const head = /^h[2-4]$/i.test(n.tagName);
       // w trybie zapasowym odrzucamy krótkie „śmieci" (menu, podpisy itp.)
-      if (!usingSpecific && !isHead && t.length < 25) continue;
+      if (!usingSpecific && !head && t.length < 25) continue;
+      blocks.push({ head, text: t });
+    }
+    return { title, meta, lead, blocks };
+  };
+
+  const renderArticle = (model) => {
+    const root = el('div', { id: ROOT_ID, style: S.root });
+
+    root.append(
+      el('a', {
+        style: S.back,
+        href: 'https://www.gazeta.pl/0,0.html',
+        text: '‹ Gazeta.pl — lista artykułów',
+      }),
+    );
+
+    root.append(el('h1', { style: S.artTitle, text: model.title }));
+    if (model.meta) root.append(el('p', { style: S.meta, text: model.meta }));
+    if (model.lead) root.append(el('p', { style: S.lead, text: model.lead }));
+
+    for (const b of model.blocks) {
       root.append(
-        el(isHead ? 'h2' : 'p', {
-          style: isHead ? S.subtitle : S.para,
-          text: t,
+        el(b.head ? 'h2' : 'p', {
+          style: b.head ? S.subtitle : S.para,
+          text: b.text,
         }),
       );
-      count++;
     }
 
-    if (!count && !leadText) {
+    if (!model.blocks.length && !model.lead) {
       root.append(
         el('p', {
           style: S.para,
@@ -439,8 +539,52 @@
   // ---------------------------------------------------------------------------
   // Przebudowa
   // ---------------------------------------------------------------------------
-  // na stronie artykułu renderujemy raz (źródło znika po czyszczeniu)
+  // na stronie artykułu renderujemy raz (źródło znika po czyszczeniu);
+  // treść trzymamy w modelu, więc render da się powtórzyć przy zmianie motywu
   let articleDone = false;
+  let articleModel = null;
+
+  const TOGGLE_ID = 'gz-theme-toggle';
+
+  // Przełącznik motywu w prawym górnym rogu (odtwarzany przy każdym renderze).
+  const mountToggle = () => {
+    const old = document.getElementById(TOGGLE_ID);
+    if (old) old.remove();
+    const warm = theme === 'warm';
+    const btn = el('button', {
+      id: TOGGLE_ID,
+      type: 'button',
+      style: S.toggle,
+      title: warm ? 'Przełącz na jasne tło' : 'Przełącz na ciepłe (nocne) tło',
+      'aria-label': warm
+        ? 'Przełącz na jasne tło'
+        : 'Przełącz na ciepłe (nocne) tło',
+      text: warm ? '☀️' : '🌙',
+    });
+    btn.addEventListener('click', toggleTheme);
+    document.body.append(btn);
+  };
+
+  // Narysuj bieżący widok wg aktywnego motywu (z modelu lub zebranych linków).
+  const paint = () => {
+    if (!document.body) return;
+    const articleMode = isArticlePage();
+    const root =
+      articleMode && articleModel ? renderArticle(articleModel) : buildRoot();
+    document.body.replaceChildren(root);
+    document.body.setAttribute('style', S.body);
+    document.body.className = '';
+    document.documentElement.style.background = PALETTES[theme].bg;
+    if (!articleMode) document.title = 'Gazeta.pl — lista artykułów';
+    mountToggle();
+  };
+
+  function toggleTheme() {
+    theme = theme === 'warm' ? 'light' : 'warm';
+    saveTheme(theme);
+    S = makeStyles(PALETTES[theme]);
+    paint();
+  }
 
   const rebuild = () => {
     if (!document.body) return;
@@ -448,13 +592,11 @@
     const articleMode = isArticlePage();
     if (articleMode && articleDone) return; // już narysowane
 
-    let root;
     if (articleMode) {
-      root = buildArticle();
+      articleModel = extractArticle();
       articleDone = true;
     } else {
       collectArticles();
-      root = buildRoot();
     }
 
     // usuń wszelkie media z całego dokumentu
@@ -466,11 +608,7 @@
       .forEach((n) => n.remove());
 
     // wyczyść <body> ze wszystkiego i wstaw nasz widok
-    document.body.replaceChildren(root);
-    document.body.setAttribute('style', S.body);
-    document.body.className = '';
-    document.documentElement.style.background = '#fafafa';
-    if (!articleMode) document.title = 'Gazeta.pl — lista artykułów';
+    paint();
   };
 
   // ---------------------------------------------------------------------------
