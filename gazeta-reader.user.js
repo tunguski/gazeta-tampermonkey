@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gazeta.pl — czysta lista artykułów
 // @namespace    https://github.com/tunguski/gazeta-tampermonkey
-// @version      1.4.0
+// @version      1.5.0
 // @description  Wyłącza JavaScript oryginalnej strony gazeta.pl (CSP), usuwa obrazy, ramki i reklamy. Na stronach z listą pokazuje prostą listę artykułów; na stronie artykułu pokazuje samą treść w minimalistycznym stylu.
 // @author       tunguski
 // @match        *://*.gazeta.pl/*
@@ -16,6 +16,16 @@
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_xmlhttpRequest
+// @connect      gazeta.pl
+// @connect      sport.pl
+// @connect      moto.pl
+// @connect      plotek.pl
+// @connect      czterykaty.pl
+// @connect      haps.pl
+// @connect      edziecko.pl
+// @connect      wyborcza.pl
+// @connect      tokfm.pl
 // @noframes
 // ==/UserScript==
 
@@ -67,7 +77,7 @@
     console.error('[gazeta-reader] CSP error:', e);
   }
   console.info(
-    '[gazeta-reader] v1.4.0 aktywny — tryb:',
+    '[gazeta-reader] v1.5.0 aktywny — tryb:',
     /,\d+,\d{4,},[^/]*\.html(\?|#|$)/i.test(location.pathname) &&
       !/\/0,0?\.html/.test(location.pathname)
       ? 'artykuł'
@@ -198,12 +208,52 @@
   // ---------------------------------------------------------------------------
   const seen = new Set();
   const bySection = new Map();
-  let totalCount = 0;
   // sekcje zwinięte (po nazwie) — trzymane poza DOM-em, żeby przetrwały
   // ponowne rendery (timery, przełączenie motywu)
   const collapsed = new Set();
   // sekcje, którym nadaliśmy już domyślny stan zwinięcia (raz na sekcję)
   const collapseInit = new Set();
+
+  // ---------------------------------------------------------------------------
+  // Daty publikacji: mapa „klucz linku (origin+pathname) -> data (ms)" lub
+  // 'unknown' (gdy w HTML nie znaleziono daty). Trzymana w GM wspólnie dla
+  // domen grupy, więc artykuł datujemy tylko raz. Linki starsze niż rok
+  // znikają z listy (a puste sekcje są pomijane).
+  // ---------------------------------------------------------------------------
+  const PUBDATES_KEY = 'gz-pubdates';
+  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+
+  const loadPubDates = () => {
+    try {
+      const v = GM_getValue(PUBDATES_KEY, {});
+      return v && typeof v === 'object' ? v : {};
+    } catch {
+      return {};
+    }
+  };
+  const pubDates = loadPubDates();
+
+  let savePubTimer = null;
+  const savePubDates = () => {
+    try {
+      GM_setValue(PUBDATES_KEY, pubDates);
+    } catch (e) {
+      console.error('[gazeta-reader] zapis dat:', e);
+    }
+  };
+  const persistPubSoon = () => {
+    if (savePubTimer) return;
+    savePubTimer = setTimeout(() => {
+      savePubTimer = null;
+      savePubDates();
+    }, 1000);
+  };
+
+  // nieznana data => link zostaje (filtrujemy tylko potwierdzone „starsze")
+  const isOldLink = (key) => {
+    const v = pubDates[key];
+    return typeof v === 'number' && Date.now() - v > ONE_YEAR_MS;
+  };
 
   const collectArticles = () => {
     let added = 0;
@@ -242,9 +292,8 @@
 
       const section = sectionFor(href);
       if (!bySection.has(section)) bySection.set(section, []);
-      bySection.get(section).push({ title, href });
+      bySection.get(section).push({ title, href, key: dedupKey });
       added++;
-      totalCount++;
     }
     return added;
   };
@@ -390,7 +439,9 @@
       ),
     );
 
+    // odfiltruj linki starsze niż rok; sekcje bez linków pomijamy
     const sections = Array.from(bySection.entries())
+      .map(([name, items]) => [name, items.filter((it) => !isOldLink(it.key))])
       .filter(([, items]) => items.length)
       .sort((a, b) => {
         const ra = sectionRank(a[0]);
@@ -399,9 +450,10 @@
         return b[1].length - a[1].length;
       });
 
-    sub.textContent = totalCount
-      ? `Znaleziono ${totalCount} artykułów w ${sections.length} sekcjach. ` +
-        'JavaScript, obrazy, ramki i reklamy usunięte.'
+    const visibleCount = sections.reduce((n, [, items]) => n + items.length, 0);
+    sub.textContent = visibleCount
+      ? `Znaleziono ${visibleCount} artykułów w ${sections.length} ` +
+        'sekcjach. JavaScript, obrazy, ramki i reklamy usunięte.'
       : 'Nie znaleziono artykułów na tej stronie.';
 
     for (const [name, items] of sections) {
@@ -662,6 +714,144 @@
     paint();
   }
 
+  // ---------------------------------------------------------------------------
+  // Pobieranie dat publikacji w tle (GM_xmlhttpRequest omija CORS między
+  // domenami grupy). Link pojawia się od razu; gdy okaże się starszy niż rok,
+  // znika przy najbliższym (odroczonym) przerysowaniu.
+  // ---------------------------------------------------------------------------
+  const MAX_DATE_FETCHES = 4;
+  const dateQueue = [];
+  const datePending = new Set();
+  let activeDateFetches = 0;
+  let repaintTimer = null;
+
+  const repaintSoon = () => {
+    if (repaintTimer) return;
+    repaintTimer = setTimeout(() => {
+      repaintTimer = null;
+      try {
+        paint();
+      } catch (e) {
+        console.error('[gazeta-reader]', e);
+      }
+    }, 400);
+  };
+
+  // rekurencyjnie znajdź pierwsze datePublished w danych JSON-LD
+  const findDatePublished = (data) => {
+    if (!data || typeof data !== 'object') return null;
+    if (Array.isArray(data)) {
+      for (const x of data) {
+        const d = findDatePublished(x);
+        if (d) return d;
+      }
+      return null;
+    }
+    if (typeof data.datePublished === 'string') return data.datePublished;
+    for (const k of Object.keys(data)) {
+      const d = findDatePublished(data[k]);
+      if (d) return d;
+    }
+    return null;
+  };
+
+  // wyłuskaj datę publikacji z HTML-a artykułu (ms) albo null
+  const parsePubDate = (html) => {
+    let doc;
+    try {
+      doc = new DOMParser().parseFromString(html, 'text/html');
+    } catch {
+      return null;
+    }
+    const metas = [
+      'meta[property="article:published_time"]',
+      'meta[name="article:published_time"]',
+      'meta[itemprop="datePublished"]',
+      'meta[property="og:article:published_time"]',
+    ];
+    for (const sel of metas) {
+      const m = doc.querySelector(sel);
+      const t = m && Date.parse(m.getAttribute('content') || '');
+      if (t) return t;
+    }
+    const time = doc.querySelector('time[datetime]');
+    const tt = time && Date.parse(time.getAttribute('datetime') || '');
+    if (tt) return tt;
+    for (const s of doc.querySelectorAll(
+      'script[type="application/ld+json"]',
+    )) {
+      try {
+        const d = findDatePublished(JSON.parse(s.textContent));
+        const t = d && Date.parse(d);
+        if (t) return t;
+      } catch {
+        /* niepoprawny JSON-LD — pomiń */
+      }
+    }
+    return null;
+  };
+
+  // cb(date) gdzie date: ms (znana), 'unknown' (brak w HTML) lub null (błąd)
+  const fetchPubDate = (href, cb) => {
+    const xhr =
+      typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest : null;
+    if (!xhr) {
+      cb(null);
+      return;
+    }
+    try {
+      xhr({
+        method: 'GET',
+        url: href,
+        timeout: 15000,
+        onload: (res) => {
+          if (res.status >= 200 && res.status < 400) {
+            const d = parsePubDate(res.responseText);
+            cb(typeof d === 'number' ? d : 'unknown');
+          } else {
+            cb(null);
+          }
+        },
+        onerror: () => cb(null),
+        ontimeout: () => cb(null),
+      });
+    } catch {
+      cb(null);
+    }
+  };
+
+  const pumpDateFetches = () => {
+    while (activeDateFetches < MAX_DATE_FETCHES && dateQueue.length) {
+      const { key, href } = dateQueue.shift();
+      activeDateFetches++;
+      fetchPubDate(href, (date) => {
+        activeDateFetches--;
+        datePending.delete(key);
+        if (date != null) {
+          pubDates[key] = date; // ms albo 'unknown'
+          persistPubSoon();
+          if (typeof date === 'number' && Date.now() - date > ONE_YEAR_MS) {
+            repaintSoon(); // stary link — zniknie przy przerysowaniu
+          }
+        }
+        // przy błędzie nie zapisujemy — spróbujemy ponownie następnym razem
+        pumpDateFetches();
+      });
+    }
+  };
+
+  // dokolejkuj nieznane linki do datowania (bez duplikatów)
+  const scheduleDateFetches = () => {
+    for (const items of bySection.values()) {
+      for (const it of items) {
+        if (it.key in pubDates || datePending.has(it.key)) continue;
+        datePending.add(it.key);
+        dateQueue.push({ key: it.key, href: it.href });
+      }
+    }
+    pumpDateFetches();
+  };
+
   const rebuild = () => {
     if (!document.body) return;
 
@@ -673,6 +863,7 @@
       articleDone = true;
     } else {
       collectArticles();
+      scheduleDateFetches();
     }
 
     // usuń wszelkie media z całego dokumentu
