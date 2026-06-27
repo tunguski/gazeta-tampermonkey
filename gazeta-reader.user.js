@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gazeta.pl — czysta lista artykułów
 // @namespace    https://github.com/tunguski/gazeta-tampermonkey
-// @version      1.5.1
+// @version      1.6.0
 // @description  Wyłącza JavaScript oryginalnej strony gazeta.pl (CSP), usuwa obrazy, ramki i reklamy. Na stronach z listą pokazuje prostą listę artykułów; na stronie artykułu pokazuje samą treść w minimalistycznym stylu.
 // @author       tunguski
 // @match        *://*.gazeta.pl/*
@@ -76,7 +76,7 @@
     console.error('[gazeta-reader] CSP error:', e);
   }
   console.info(
-    '[gazeta-reader] v1.5.1 aktywny — tryb:',
+    '[gazeta-reader] v1.6.0 aktywny — tryb:',
     /,\d+,\d{4,},[^/]*\.html(\?|#|$)/i.test(location.pathname) &&
       !/\/0,0?\.html/.test(location.pathname)
       ? 'artykuł'
@@ -217,11 +217,38 @@
   // ---------------------------------------------------------------------------
   // Daty publikacji: mapa „klucz linku (origin+pathname) -> data (ms)" lub
   // 'unknown' (gdy w HTML nie znaleziono daty). Trzymana w GM wspólnie dla
-  // domen grupy, więc artykuł datujemy tylko raz. Linki starsze niż rok
-  // znikają z listy (a puste sekcje są pomijane).
+  // domen grupy, więc artykuł datujemy tylko raz. Linki spoza wybranego
+  // zakresu (przycisk „🗓") znikają z listy, a puste sekcje są pomijane.
   // ---------------------------------------------------------------------------
   const PUBDATES_KEY = 'gz-pubdates';
-  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  // zakres dat — przełączany cyklicznie przyciskiem (zapamiętany w GM)
+  const TIMEFRAMES = [
+    { id: '7d', label: '7 dni', ms: 7 * DAY_MS },
+    { id: '1m', label: '1 miesiąc', ms: 30 * DAY_MS },
+    { id: '1y', label: '1 rok', ms: 365 * DAY_MS },
+    { id: 'all', label: 'Wszystko', ms: Infinity },
+  ];
+  const TIMEFRAME_KEY = 'gz-timeframe';
+  const loadTimeframe = () => {
+    try {
+      const v = GM_getValue(TIMEFRAME_KEY);
+      return TIMEFRAMES.some((t) => t.id === v) ? v : '1y';
+    } catch {
+      return '1y';
+    }
+  };
+  const saveTimeframe = (t) => {
+    try {
+      GM_setValue(TIMEFRAME_KEY, t);
+    } catch (e) {
+      console.error('[gazeta-reader] zapis zakresu:', e);
+    }
+  };
+  let timeframe = loadTimeframe();
+  const currentTimeframe = () =>
+    TIMEFRAMES.find((t) => t.id === timeframe) || TIMEFRAMES[2];
 
   const loadPubDates = () => {
     try {
@@ -249,10 +276,15 @@
     }, 1000);
   };
 
-  // nieznana data => link zostaje (filtrujemy tylko potwierdzone „starsze")
-  const isOldLink = (key) => {
+  // data poza wybranym zakresem? (zakres „Wszystko" => nigdy)
+  const outsideTimeframe = (dateMs) => {
+    const ms = currentTimeframe().ms;
+    return ms !== Infinity && Date.now() - dateMs > ms;
+  };
+  // nieznana data => link zostaje (ukrywamy tylko potwierdzone spoza zakresu)
+  const hiddenByDate = (key) => {
     const v = pubDates[key];
-    return typeof v === 'number' && Date.now() - v > ONE_YEAR_MS;
+    return typeof v === 'number' && outsideTimeframe(v);
   };
 
   const collectArticles = () => {
@@ -394,14 +426,22 @@
     subtitle:
       'font-size:20px;line-height:1.3;margin:26px 0 10px;' +
       `color:${p.title};`,
-    // pasek przełącznika motywu — w treści, wyrównany do prawej
-    toggleBar: 'text-align:right;margin:0 0 4px;',
+    // pasek przełączników — w treści, wyrównany do prawej
+    toggleBar: 'text-align:right;margin:0 0 8px;',
+    // przełącznik zakresu dat — etykieta tekstowa (pigułka)
+    tf:
+      'position:relative;height:36px;padding:0 12px;margin-right:8px;' +
+      'font-size:13px;cursor:pointer;display:inline-flex;align-items:center;' +
+      `vertical-align:middle;color:${p.text};background:${p.btnBg};` +
+      `border:1px solid ${p.rule};border-radius:18px;` +
+      'box-shadow:0 1px 3px rgba(0,0,0,.18);',
     // przełącznik motywu — sama ikona, w normalnym przepływie strony
     toggle:
       'position:relative;width:36px;height:36px;padding:0;font-size:18px;' +
       'line-height:1;display:inline-flex;align-items:center;' +
-      `justify-content:center;cursor:pointer;color:${p.text};` +
-      `background:${p.btnBg};border:1px solid ${p.rule};border-radius:50%;` +
+      `justify-content:center;cursor:pointer;vertical-align:middle;` +
+      `color:${p.text};background:${p.btnBg};` +
+      `border:1px solid ${p.rule};border-radius:50%;` +
       'box-shadow:0 1px 3px rgba(0,0,0,.18);',
   });
 
@@ -439,9 +479,12 @@
       ),
     );
 
-    // odfiltruj linki starsze niż rok; sekcje bez linków pomijamy
+    // odfiltruj linki spoza wybranego zakresu; sekcje bez linków pomijamy
     const sections = Array.from(bySection.entries())
-      .map(([name, items]) => [name, items.filter((it) => !isOldLink(it.key))])
+      .map(([name, items]) => [
+        name,
+        items.filter((it) => !hiddenByDate(it.key)),
+      ])
       .filter(([, items]) => items.length)
       .sort((a, b) => {
         const ra = sectionRank(a[0]);
@@ -692,14 +735,40 @@
     return btn;
   };
 
+  const TF_ID = 'gz-timeframe-toggle';
+
+  // Przycisk zakresu dat — pokazuje bieżący zakres; klik zmienia go cyklicznie.
+  const makeTimeframeBtn = () => {
+    const btn = el('button', {
+      id: TF_ID,
+      type: 'button',
+      style: S.tf,
+      title: 'Zakres dat publikacji — kliknij, aby zmienić',
+      text: '🗓 ' + currentTimeframe().label,
+    });
+    btn.addEventListener('click', cycleTimeframe);
+    return btn;
+  };
+
+  function cycleTimeframe() {
+    const i = TIMEFRAMES.findIndex((t) => t.id === timeframe);
+    timeframe = TIMEFRAMES[(i + 1) % TIMEFRAMES.length].id;
+    saveTimeframe(timeframe);
+    paint();
+  }
+
   // Narysuj bieżący widok wg aktywnego motywu (z modelu lub zebranych linków).
   const paint = () => {
     if (!document.body) return;
     const articleMode = isArticlePage();
     const root =
       articleMode && articleModel ? renderArticle(articleModel) : buildRoot();
-    // przełącznik w treści (przewija się ze stroną), wyrównany do prawej
-    root.prepend(el('div', { style: S.toggleBar }, makeToggle()));
+    // przełączniki w treści (przewijają się ze stroną), wyrównane do prawej;
+    // zakres dat dotyczy tylko listy, więc na artykule go nie pokazujemy
+    const bar = el('div', { style: S.toggleBar });
+    if (!articleMode) bar.append(makeTimeframeBtn());
+    bar.append(makeToggle());
+    root.prepend(bar);
     document.body.replaceChildren(root);
     document.body.setAttribute('style', S.body);
     document.body.className = '';
@@ -830,8 +899,8 @@
         if (date != null) {
           pubDates[key] = date; // ms albo 'unknown'
           persistPubSoon();
-          if (typeof date === 'number' && Date.now() - date > ONE_YEAR_MS) {
-            repaintSoon(); // stary link — zniknie przy przerysowaniu
+          if (typeof date === 'number' && outsideTimeframe(date)) {
+            repaintSoon(); // poza zakresem — zniknie przy przerysowaniu
           }
         }
         // przy błędzie nie zapisujemy — spróbujemy ponownie następnym razem

@@ -5,9 +5,11 @@
   "private": true,
   "scripts": {
     "format": "prettier --write \"*.user.js\"",
-    "format:check": "prettier --check \"*.user.js\""
+    "format:check": "prettier --check \"*.user.js\"",
+    "test": "node test/gazeta-reader.test.js"
   },
   "devDependencies": {
+    "jsdom": "^26.0.0",
     "prettier": "^3.4.2"
   }
 }

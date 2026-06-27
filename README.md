@@ -19,6 +19,11 @@ obrazów, ramek, reklam i całego JavaScriptu strony.
   **Wiadomości** — każdy nagłówek można kliknąć, aby zwinąć/rozwinąć (▾ / ▸).
 - **Strona artykułu** → sama treść (tytuł, lead, akapity, śródtytuły) w
   minimalistycznym stylu, bez listy artykułów powiązanych.
+- **Zakres dat** — przycisk 🗓 (obok przełącznika motywu) przełącza cyklicznie
+  zakres publikacji: **7 dni → 1 miesiąc → 1 rok → Wszystko**. Lista pokazuje
+  tylko artykuły z wybranego okresu (puste sekcje znikają). Daty publikacji są
+  pobierane w tle i zapamiętywane, a sam wybór zakresu — trzymany w
+  przeglądarce (domyślnie **1 rok**). Zob. „Daty publikacji" niżej.
 - **Ciepłe („nocne") tło** — przycisk 🌙 w prawym górnym rogu treści przełącza
   między jasną a ciepłą/sepiową paletą (mniej niebieskiego światła,
   łagodniejszą dla oczu — na wzór *Night light* w Windows). Wybór jest
@@ -52,16 +57,21 @@ obrazów, ramek, reklam i całego JavaScriptu strony.
 > zapisać. W konsoli (F12) skrypt wypisuje swoją wersję i wykryty tryb
 > (`artykuł` / `lista`), co ułatwia diagnozę.
 
-## Rozwój / formatowanie
+## Rozwój / formatowanie / testy
 
 Kod trzymany jest w limicie **80 znaków na linię**. Do formatowania służy
-[Prettier](https://prettier.io/) (konfiguracja w `.prettierrc.json`):
+[Prettier](https://prettier.io/) (konfiguracja w `.prettierrc.json`), a testy
+zachowania uruchamia [jsdom](https://github.com/jsdom/jsdom):
 
 ```bash
-npm install        # jednorazowo
+npm install           # jednorazowo
 npm run format        # sformatuj gazeta-reader.user.js
 npm run format:check  # sprawdź bez zmian (np. w CI)
+npm test              # testy zachowania (test/gazeta-reader.test.js)
 ```
+
+Testy ładują skrypt do świeżego okna jsdom, podstawiają API `GM_*` i sprawdzają
+m.in. motyw, zwijanie sekcji, czyszczenie treści, datowanie i zakres dat.
 
 > Prettier nie zawija komentarzy ani długich literałów — te zawijane są ręcznie.
 > Wyjątek: nagłówek `@description` musi pozostać w jednej linii (wymóg
@@ -81,6 +91,17 @@ więc to podejście jest trwalsze. Treść artykułu pobierana jest z konteneró
 `#article_title` / `#gazeta_article_lead` / `#gazeta_article_body`
 (`p.art_paragraph`, `h2.art_sub_title`), z zapasowym, generycznym wyciąganiem
 akapitów dla nietypowych szablonów.
+
+## Daty publikacji
+
+Dla każdego linku skrypt potrzebuje daty publikacji, by zastosować wybrany
+zakres. Mapa `link → data` trzymana jest trwale w przeglądarce (`GM_setValue`,
+wspólnie dla domen grupy), więc każdy artykuł pobierany jest **tylko raz**.
+Nieznane linki pokazują się od razu, a w tle (przez `GM_xmlhttpRequest`, z
+ograniczoną liczbą równoległych żądań) doczytywana jest data z nagłówków
+artykułu (`article:published_time`, JSON-LD `datePublished` lub `<time>`).
+Gdy data okaże się spoza zakresu, link znika przy najbliższym przerysowaniu.
+Linki bez wykrytej daty pozostają widoczne.
 
 ## Ograniczenia
 
